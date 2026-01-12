@@ -1,0 +1,26 @@
+# SAM build artifacts
+.aws-sam/
+samconfig.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deployment artifacts
+*.zip
+packaged.yaml
+
+# Local config (may contain secrets)
+config.json
+.env
