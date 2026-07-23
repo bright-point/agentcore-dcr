@@ -26,9 +26,13 @@ Parameters:
     Type: String
     Description: Cognito domain (without https://)
 
-  MCPLambdaArn:
+  KnowledgeBaseId:
     Type: String
-    Description: ARN of your backend Lambda function (MCP server, API, etc.)
+    Description: ID of your existing Bedrock Managed Knowledge Base (e.g. 10SEIXTFFF)
+
+  KnowledgeBaseArn:
+    Type: String
+    Description: ARN of your Bedrock Knowledge Base (arn:aws:bedrock:REGION:ACCOUNT:knowledge-base/KB_ID)
 
 Globals:
   Function:
@@ -94,7 +98,7 @@ Resources:
                   "revocation_endpoint": "https://${CognitoDomain}/oauth2/revoke",
                   "jwks_uri": "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}/.well-known/jwks.json",
                   "registration_endpoint": "https://${OAuthMetadataApi}.execute-api.${AWS::Region}.amazonaws.com/prod/register",
-                  "scopes_supported": ["openid", "email", "phone", "profile", "${ResourcePrefix}/read", "${ResourcePrefix}/write"],
+                  "scopes_supported": ["openid", "email", "profile"],
                   "response_types_supported": ["code", "token"],
                   "grant_types_supported": ["authorization_code", "refresh_token"],
                   "subject_types_supported": ["public"],
@@ -232,10 +236,10 @@ Resources:
                       GenerateSecret=True,
                       ExplicitAuthFlows=['ALLOW_USER_SRP_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'],
                       AllowedOAuthFlows=['code'],
-                      AllowedOAuthScopes=['email', 'openid', 'phone', 'profile', f'{prefix}/read', f'{prefix}/write'],
+                      AllowedOAuthScopes=['email', 'openid', 'profile'],
                       AllowedOAuthFlowsUserPoolClient=True,
                       CallbackURLs=redirect_uris,
-                      SupportedIdentityProviders=['COGNITO']
+                      SupportedIdentityProviders=['Google']
                   )
 
                   client_id = client_response['UserPoolClient']['ClientId']
@@ -388,13 +392,15 @@ Resources:
               Service: bedrock.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: InvokeMCPLambda
+        - PolicyName: RetrieveFromKnowledgeBase
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: lambda:InvokeFunction
-                Resource: !Ref MCPLambdaArn
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource: !Ref KnowledgeBaseArn
 
   # Initial Cognito client for manual registration (optional)
   InitialMCPClient:
@@ -411,16 +417,14 @@ Resources:
       AllowedOAuthScopes:
         - email
         - openid
-        - phone
         - profile
-        - !Sub '${ResourcePrefix}/read'
-        - !Sub '${ResourcePrefix}/write'
       AllowedOAuthFlowsUserPoolClient: true
       CallbackURLs:
         - http://127.0.0.1:33418
         - http://localhost:33418
+        - https://claude.ai/api/mcp/auth_callback
       SupportedIdentityProviders:
-        - COGNITO
+        - Google
 
   # MCP Gateway
   MCPGateway:
@@ -443,17 +447,25 @@ Resources:
             - !Ref InitialMCPClient
             # DCR Lambda adds additional clients dynamically
 
-  # Gateway Target
+  # Gateway Target - Knowledge Base connector (Standard retrieval)
   MCPGatewayTarget:
     Type: AWS::BedrockAgentCore::GatewayTarget
     DependsOn: MCPGateway
     Properties:
       GatewayIdentifier: !Ref MCPGateway
-      Name: !Sub '${ResourcePrefix}-mcp-target'
-      Description: MCP Lambda target
+      Name: !Sub '${ResourcePrefix}-kb-target'
+      Description: Bedrock Knowledge Base target (Standard retrieval)
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
       TargetConfiguration:
-        LambdaTargetConfiguration:
-          LambdaArn: !Ref MCPLambdaArn
+        Mcp:
+          Connector:
+            Source:
+              ConnectorId: bedrock-knowledge-bases
+            Configurations:
+              - Name: Retrieve
+                ParameterValues:
+                  knowledgeBaseId: !Ref KnowledgeBaseId
 
 Outputs:
   GatewayUrl:
